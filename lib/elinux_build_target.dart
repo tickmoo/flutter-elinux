@@ -22,6 +22,7 @@ import 'package:flutter_tools/src/build_system/targets/icon_tree_shaker.dart';
 import 'package:flutter_tools/src/build_system/targets/native_assets.dart';
 import 'package:flutter_tools/src/cache.dart';
 import 'package:flutter_tools/src/cmake.dart';
+import 'package:flutter_tools/src/devfs.dart';
 import 'package:flutter_tools/src/globals.dart' as globals;
 import 'package:flutter_tools/src/isolated/native_assets/dart_hook_result.dart';
 import 'package:flutter_tools/src/project.dart';
@@ -42,38 +43,45 @@ abstract class ELinuxAssetBundle extends Target {
 
   @override
   List<Source> get inputs => const <Source>[
-        Source.pattern('{BUILD_DIR}/app.dill'),
-        ...IconTreeShaker.inputs,
-      ];
+    Source.pattern('{BUILD_DIR}/app.dill'),
+    ...IconTreeShaker.inputs,
+  ];
 
   @override
   List<Source> get outputs => const <Source>[];
 
   @override
-  List<String> get depfiles => <String>[
-        'flutter_assets.d',
-      ];
+  List<String> get depfiles => <String>['flutter_assets.d'];
 
   @override
   List<Target> get dependencies => const <Target>[
-        KernelSnapshot(),
-      ];
+    DartBuildForNative(),
+    KernelSnapshot(),
+    InstallCodeAssets(),
+  ];
 
   @override
   Future<void> build(Environment environment) async {
     if (environment.defines[kBuildMode] == null) {
       throw MissingDefineException(kBuildMode, name);
     }
-    final BuildMode buildMode = BuildMode.fromCliName(environment.defines[kBuildMode]!);
-    final Directory outputDirectory = environment.outputDir.childDirectory('flutter_assets')
-      ..createSync(recursive: true);
+    final BuildMode buildMode = BuildMode.fromCliName(
+      environment.defines[kBuildMode]!,
+    );
+    final Directory outputDirectory = environment.outputDir.childDirectory(
+      'flutter_assets',
+    )..createSync(recursive: true);
 
     // Only copy the prebuilt runtimes and kernel blob in debug mode.
     if (buildMode == BuildMode.debug) {
-      final String vmSnapshotData =
-          environment.artifacts.getArtifactPath(Artifact.vmSnapshotData, mode: BuildMode.debug);
-      final String isolateSnapshotData = environment.artifacts
-          .getArtifactPath(Artifact.isolateSnapshotData, mode: BuildMode.debug);
+      final String vmSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.vmSnapshotData,
+        mode: BuildMode.debug,
+      );
+      final String isolateSnapshotData = environment.artifacts.getArtifactPath(
+        Artifact.isolateSnapshotData,
+        mode: BuildMode.debug,
+      );
       environment.buildDir
           .childFile('app.dill')
           .copySync(outputDirectory.childFile('kernel_blob.bin').path);
@@ -84,9 +92,12 @@ abstract class ELinuxAssetBundle extends Target {
           .file(isolateSnapshotData)
           .copySync(outputDirectory.childFile('isolate_snapshot_data').path);
     }
-    final TargetPlatform tp =
-        buildInfo.targetArch == 'arm64' ? TargetPlatform.linux_arm64 : TargetPlatform.linux_x64;
-    final DartHooksResult dartHookResult = await DartBuild.loadHookResult(environment);
+    final TargetPlatform tp = buildInfo.targetArch == 'arm64'
+        ? TargetPlatform.linux_arm64
+        : TargetPlatform.linux_x64;
+    final DartHooksResult dartHookResult = await DartBuild.loadHookResult(
+      environment,
+    );
     final Depfile assetDepfile = await copyAssets(
       environment,
       outputDirectory,
@@ -94,6 +105,11 @@ abstract class ELinuxAssetBundle extends Target {
       targetPlatform: tp,
       buildMode: buildMode,
       flavor: environment.defines[kFlavor],
+      additionalContent: <String, DevFSContent>{
+        'NativeAssetsManifest.json': DevFSFileContent(
+          environment.buildDir.childFile('native_assets.json'),
+        ),
+      },
     );
     final DepfileService depfileService = DepfileService(
       fileSystem: environment.fileSystem,
@@ -115,24 +131,24 @@ class DebugELinuxApplication extends ELinuxAssetBundle {
 
   @override
   List<Source> get inputs => <Source>[
-        ...super.inputs,
-        const Source.artifact(Artifact.vmSnapshotData, mode: BuildMode.debug),
-        const Source.artifact(Artifact.isolateSnapshotData, mode: BuildMode.debug),
-      ];
+    ...super.inputs,
+    const Source.artifact(Artifact.vmSnapshotData, mode: BuildMode.debug),
+    const Source.artifact(Artifact.isolateSnapshotData, mode: BuildMode.debug),
+  ];
 
   @override
   List<Source> get outputs => <Source>[
-        ...super.outputs,
-        const Source.pattern('{OUTPUT_DIR}/flutter_assets/vm_snapshot_data'),
-        const Source.pattern('{OUTPUT_DIR}/flutter_assets/isolate_snapshot_data'),
-        const Source.pattern('{OUTPUT_DIR}/flutter_assets/kernel_blob.bin'),
-      ];
+    ...super.outputs,
+    const Source.pattern('{OUTPUT_DIR}/flutter_assets/vm_snapshot_data'),
+    const Source.pattern('{OUTPUT_DIR}/flutter_assets/isolate_snapshot_data'),
+    const Source.pattern('{OUTPUT_DIR}/flutter_assets/kernel_blob.bin'),
+  ];
 
   @override
   List<Target> get dependencies => <Target>[
-        ...super.dependencies,
-        ELinuxPlugins(buildInfo),
-      ];
+    ...super.dependencies,
+    ELinuxPlugins(buildInfo),
+  ];
 }
 
 /// See: [ReleaseAndroidApplication] in `android.dart`
@@ -144,12 +160,14 @@ class ReleaseELinuxApplication extends ELinuxAssetBundle {
 
   @override
   List<Target> get dependencies => <Target>[
-        ...super.dependencies,
-        ELinuxAotElf(buildInfo.targetArch == 'arm64'
-            ? TargetPlatform.linux_arm64
-            : TargetPlatform.linux_x64),
-        ELinuxPlugins(buildInfo),
-      ];
+    ...super.dependencies,
+    ELinuxAotElf(
+      buildInfo.targetArch == 'arm64'
+          ? TargetPlatform.linux_arm64
+          : TargetPlatform.linux_x64,
+    ),
+    ELinuxPlugins(buildInfo),
+  ];
 }
 
 /// Compiles eLinux native plugins into a single shared object.
@@ -163,17 +181,15 @@ class ELinuxPlugins extends Target {
 
   @override
   List<Source> get inputs => const <Source>[
-        Source.pattern('{FLUTTER_ROOT}/../lib/elinux_build_target.dart'),
-        Source.pattern('{PROJECT_DIR}/.packages'),
-      ];
+    Source.pattern('{FLUTTER_ROOT}/../lib/elinux_build_target.dart'),
+    Source.pattern('{PROJECT_DIR}/.packages'),
+  ];
 
   @override
   List<Source> get outputs => const <Source>[];
 
   @override
-  List<String> get depfiles => <String>[
-        'elinux_plugins.d',
-      ];
+  List<String> get depfiles => <String>['elinux_plugins.d'];
 
   @override
   List<Target> get dependencies => const <Target>[];
@@ -195,27 +211,26 @@ class ELinuxAotElf extends AotElfBase {
 
   @override
   List<Source> get inputs => <Source>[
-        const Source.pattern(
-            '{FLUTTER_ROOT}/packages/flutter_tools/lib/src/build_system/targets/common.dart'),
-        const Source.pattern('{BUILD_DIR}/app.dill'),
-        const Source.artifact(Artifact.engineDartBinary),
-        const Source.artifact(Artifact.skyEnginePath),
-        Source.artifact(
-          Artifact.genSnapshot,
-          platform: targetPlatform,
-          mode: BuildMode.release,
-        ),
-      ];
+    const Source.pattern(
+      '{FLUTTER_ROOT}/packages/flutter_tools/lib/src/build_system/targets/common.dart',
+    ),
+    const Source.pattern('{BUILD_DIR}/app.dill'),
+    const Source.artifact(Artifact.engineDartBinary),
+    const Source.artifact(Artifact.skyEnginePath),
+    Source.artifact(
+      Artifact.genSnapshot,
+      platform: targetPlatform,
+      mode: BuildMode.release,
+    ),
+  ];
 
   @override
   List<Source> get outputs => const <Source>[
-        Source.pattern('{BUILD_DIR}/app.so'),
-      ];
+    Source.pattern('{BUILD_DIR}/app.so'),
+  ];
 
   @override
-  List<Target> get dependencies => const <Target>[
-        KernelSnapshot(),
-      ];
+  List<Target> get dependencies => const <Target>[KernelSnapshot()];
 
   final TargetPlatform targetPlatform;
 }
@@ -226,11 +241,15 @@ class NativeBundle {
   final ELinuxBuildInfo? buildInfo;
   final String? targetFile;
 
-  final ProcessUtils _processUtils =
-      ProcessUtils(logger: globals.logger, processManager: globals.processManager);
+  final ProcessUtils _processUtils = ProcessUtils(
+    logger: globals.logger,
+    processManager: globals.processManager,
+  );
 
   Future<void> build(Environment environment) async {
-    final FlutterProject project = FlutterProject.fromDirectory(environment.projectDir);
+    final FlutterProject project = FlutterProject.fromDirectory(
+      environment.projectDir,
+    );
     final ELinuxProject eLinuxProject = ELinuxProject.fromFlutter(project);
 
     // Clean up the intermediate and output directories.
@@ -256,63 +275,88 @@ class NativeBundle {
     }
     outputBundleLibDir.createSync(recursive: true);
 
-    final Directory outputBundleDataDir = outputBundleDir.childDirectory('data');
+    final Directory outputBundleDataDir = outputBundleDir.childDirectory(
+      'data',
+    );
     if (outputBundleDataDir.existsSync()) {
       outputBundleDataDir.deleteSync(recursive: true);
     }
     outputBundleDataDir.createSync(recursive: true);
 
     // Copy necessary files
-    final Directory engineDir = _getEngineArtifactsDirectory(buildInfo!.targetArch, buildMode);
-    final Directory commonDir = engineDir.parent.childDirectory('elinux-common');
+    final Directory engineDir = _getEngineArtifactsDirectory(
+      buildInfo!.targetArch,
+      buildMode,
+    );
+    final Directory commonDir = engineDir.parent.childDirectory(
+      'elinux-common',
+    );
     final File engineBinary = engineDir.childFile('libflutter_engine.so');
     // libflutter_elinux_*.so in profile mode is under the debug mode's directory.
     final Directory embedderDir = _getEngineArtifactsDirectory(
-        buildInfo!.targetArch, buildMode.isRelease ? buildMode : BuildMode.fromCliName('debug'));
-    final File embedder = embedderDir.childFile(buildInfo!.targetBackendType == 'gbm'
-        ? 'libflutter_elinux_gbm.so'
-        : buildInfo!.targetBackendType == 'eglstream'
-            ? 'libflutter_elinux_eglstream.so'
-            : buildInfo!.targetBackendType == 'x11'
-                ? 'libflutter_elinux_x11.so'
-                : 'libflutter_elinux_wayland.so');
-    final Directory clientWrapperDir = commonDir.childDirectory('cpp_client_wrapper');
+      buildInfo!.targetArch,
+      buildMode.isRelease ? buildMode : BuildMode.fromCliName('debug'),
+    );
+    final File embedder = embedderDir.childFile(
+      buildInfo!.targetBackendType == 'gbm'
+          ? 'libflutter_elinux_gbm.so'
+          : buildInfo!.targetBackendType == 'eglstream'
+          ? 'libflutter_elinux_eglstream.so'
+          : buildInfo!.targetBackendType == 'x11'
+          ? 'libflutter_elinux_x11.so'
+          : 'libflutter_elinux_wayland.so',
+    );
+    final Directory clientWrapperDir = commonDir.childDirectory(
+      'cpp_client_wrapper',
+    );
 
-    final Directory pluginsDir = environment.buildDir.childDirectory('elinux_plugins');
+    final Directory pluginsDir = environment.buildDir.childDirectory(
+      'elinux_plugins',
+    );
     final File pluginsLib = pluginsDir.childFile('libflutter_plugins.so');
     if (pluginsLib.existsSync()) {
-      pluginsLib.copySync(outputBundleLibDir.childFile(pluginsLib.basename).path);
+      pluginsLib.copySync(
+        outputBundleLibDir.childFile(pluginsLib.basename).path,
+      );
     }
     final Directory pluginsUserLibDir = pluginsDir.childDirectory('lib');
     if (pluginsUserLibDir.existsSync()) {
-      pluginsUserLibDir
-          .listSync()
-          .whereType<File>()
-          .forEach((File lib) => lib.copySync(outputBundleLibDir.childFile(lib.basename).path));
+      pluginsUserLibDir.listSync().whereType<File>().forEach(
+        (File lib) =>
+            lib.copySync(outputBundleLibDir.childFile(lib.basename).path),
+      );
     }
 
     final Directory flutterDir = eLinuxDir.childDirectory('flutter');
-    final Directory flutterEphemeralDir = flutterDir.childDirectory('ephemeral');
+    final Directory flutterEphemeralDir = flutterDir.childDirectory(
+      'ephemeral',
+    );
 
     // Copy necessary files.
     {
       flutterEphemeralDir.createSync(recursive: true);
-      flutterEphemeralDir.childDirectory('cpp_client_wrapper').createSync(recursive: true);
+      flutterEphemeralDir
+          .childDirectory('cpp_client_wrapper')
+          .createSync(recursive: true);
 
       copyDirectory(
         clientWrapperDir,
         flutterEphemeralDir.childDirectory('cpp_client_wrapper'),
       );
 
-      commonDir
-          .listSync()
-          .whereType<File>()
-          .forEach((File lib) => lib.copySync(flutterEphemeralDir.childFile(lib.basename).path));
+      commonDir.listSync().whereType<File>().forEach(
+        (File lib) =>
+            lib.copySync(flutterEphemeralDir.childFile(lib.basename).path),
+      );
 
-      engineBinary.copySync(flutterEphemeralDir.childFile(engineBinary.basename).path);
+      engineBinary.copySync(
+        flutterEphemeralDir.childFile(engineBinary.basename).path,
+      );
       embedder.copySync(flutterEphemeralDir.childFile(embedder.basename).path);
 
-      final File icuData = commonDir.childDirectory('icu').childFile('icudtl.dat');
+      final File icuData = commonDir
+          .childDirectory('icu')
+          .childFile('icudtl.dat');
       icuData.copySync(flutterEphemeralDir.childFile(icuData.basename).path);
 
       if (buildMode.isPrecompiled) {
@@ -324,30 +368,41 @@ class NativeBundle {
     // Build the environment that needs to be set for the re-entrant flutter build
     // step.
     {
-      final Map<String, String> environmentConfig = buildInfo!.buildInfo.toEnvironmentConfig();
+      final Map<String, String> environmentConfig = buildInfo!.buildInfo
+          .toEnvironmentConfig();
       environmentConfig['FLUTTER_TARGET'] = targetFile!;
-      final LocalEngineInfo? localEngineInfo = globals.artifacts?.localEngineInfo;
+      final LocalEngineInfo? localEngineInfo =
+          globals.artifacts?.localEngineInfo;
       if (localEngineInfo != null) {
         final String targetOutPath = localEngineInfo.targetOutPath;
         // $ENGINE/src/out/foo_bar_baz -> $ENGINE/src
-        environmentConfig['FLUTTER_ENGINE'] =
-            globals.fs.path.dirname(globals.fs.path.dirname(targetOutPath));
+        environmentConfig['FLUTTER_ENGINE'] = globals.fs.path.dirname(
+          globals.fs.path.dirname(targetOutPath),
+        );
         environmentConfig['LOCAL_ENGINE'] = localEngineInfo.localTargetName;
         environmentConfig['LOCAL_ENGINE_HOST'] = localEngineInfo.localHostName;
       }
-      writeGeneratedCmakeConfig(Cache.flutterRoot!, eLinuxProject, buildInfo!.buildInfo,
-          environmentConfig, environment.logger);
+      writeGeneratedCmakeConfig(
+        Cache.flutterRoot!,
+        eLinuxProject,
+        buildInfo!.buildInfo,
+        environmentConfig,
+        environment.logger,
+      );
     }
 
     // Run the native build.
     final String cmakeBuildType = buildMode.isPrecompiled ? 'Release' : 'Debug';
-    final String targetArch = buildInfo!.targetArch == 'arm64' ? 'aarch64' : 'x86_64';
+    final String targetArch = buildInfo!.targetArch == 'arm64'
+        ? 'aarch64'
+        : 'x86_64';
     final String hostArch = _getCurrentHostPlatformArchName();
     final String? targetCompilerTriple = buildInfo!.targetCompilerTriple;
     final String targetSysroot = buildInfo!.targetSysroot;
     final String? targetCompilerFlags = buildInfo!.targetCompilerFlags;
     final String? targetToolchain = buildInfo!.targetToolchain;
-    final String? systemIncludeDirectories = buildInfo!.systemIncludeDirectories;
+    final String? systemIncludeDirectories =
+        buildInfo!.systemIncludeDirectories;
     RunResult result = await _processUtils.run(
       <String>[
         'cmake',
@@ -355,13 +410,17 @@ class NativeBundle {
         '-DFLUTTER_TARGET_BACKEND_TYPE=${buildInfo!.targetBackendType}',
         '-DFLUTTER_TARGET_PLATFORM=elinux-${buildInfo!.targetArch}',
         if (targetSysroot != '/') '-DCMAKE_SYSROOT=$targetSysroot',
-        if (buildInfo!.targetArch != hostArch) '-DCMAKE_SYSTEM_PROCESSOR=$targetArch',
+        if (buildInfo!.targetArch != hostArch)
+          '-DCMAKE_SYSTEM_PROCESSOR=$targetArch',
         if (systemIncludeDirectories != null)
           '-DFLUTTER_SYSTEM_INCLUDE_DIRECTORIES=$systemIncludeDirectories',
-        if (targetCompilerTriple != null) '-DCMAKE_C_COMPILER_TARGET=$targetCompilerTriple',
-        if (targetCompilerTriple != null) '-DCMAKE_CXX_COMPILER_TARGET=$targetCompilerTriple',
+        if (targetCompilerTriple != null)
+          '-DCMAKE_C_COMPILER_TARGET=$targetCompilerTriple',
+        if (targetCompilerTriple != null)
+          '-DCMAKE_CXX_COMPILER_TARGET=$targetCompilerTriple',
         if (targetCompilerFlags != null) '-DCMAKE_C_FLAGS=$targetCompilerFlags',
-        if (targetCompilerFlags != null) '-DCMAKE_CXX_FLAGS=$targetCompilerFlags',
+        if (targetCompilerFlags != null)
+          '-DCMAKE_CXX_FLAGS=$targetCompilerFlags',
         eLinuxDir.path,
       ],
       workingDirectory: outputDir.path,
@@ -375,33 +434,47 @@ class NativeBundle {
 
     final String numProc = procResult.stdout.toString().trim();
 
-    result = await _processUtils.run(
-      <String>[
-        'cmake',
-        '--build',
-        '.',
-        '--parallel',
-        numProc,
-      ],
-      workingDirectory: outputDir.path,
-    );
+    result = await _processUtils.run(<String>[
+      'cmake',
+      '--build',
+      '.',
+      '--parallel',
+      numProc,
+    ], workingDirectory: outputDir.path);
     if (result.exitCode != 0) {
       throwToolExit('Failed to cmake build:\n$result');
     }
 
     // Create flutter app's bunle.
-    result = await _processUtils.run(
-      <String>['cmake', '--install', '.'],
-      workingDirectory: outputDir.path,
-    );
+    result = await _processUtils.run(<String>[
+      'cmake',
+      '--install',
+      '.',
+    ], workingDirectory: outputDir.path);
     if (result.exitCode != 0) {
       throwToolExit('Failed to cmake install:\n$result');
     }
     {
-      final Directory flutterAssetsDir = outputBundleDataDir.childDirectory('flutter_assets');
+      final Directory flutterAssetsDir = outputBundleDataDir.childDirectory(
+        'flutter_assets',
+      );
       copyDirectory(
         environment.outputDir.childDirectory('flutter_assets'),
         flutterAssetsDir,
+      );
+    }
+
+    // Copy native code assets declared by build hooks (e.g. dynamically loaded
+    // shared libraries from `@Native` FFI bindings) into the bundle's lib
+    // directory. The list comes from `DartBuildForNative`, which runs
+    // transitively as a dependency of [ELinuxAssetBundle].
+    final DartHooksResult dartHookResult = await DartBuild.loadHookResult(
+      environment,
+    );
+    for (final Uri assetUri in dartHookResult.filesToBeBundled) {
+      final File sourceFile = environment.fileSystem.file(assetUri);
+      sourceFile.copySync(
+        outputBundleLibDir.childFile(sourceFile.basename).path,
       );
     }
   }
@@ -411,9 +484,12 @@ Map<String, String> _buildCMakeEnvironment(String? targetToolchain) {
   final String? ccEnv = Platform.environment['CC'];
   final String? cxxEnv = Platform.environment['CXX'];
 
-  final String cc = ccEnv ?? (targetToolchain != null ? '$targetToolchain/bin/clang' : 'clang');
+  final String cc =
+      ccEnv ??
+      (targetToolchain != null ? '$targetToolchain/bin/clang' : 'clang');
   final String cxx =
-      cxxEnv ?? (targetToolchain != null ? '$targetToolchain/bin/clang++' : 'clang++');
+      cxxEnv ??
+      (targetToolchain != null ? '$targetToolchain/bin/clang++' : 'clang++');
 
   return <String, String>{'CC': cc, 'CXX': cxx};
 }
@@ -463,5 +539,7 @@ String getDefaultPathVariable() {
 /// See: [CachedArtifacts._getEngineArtifactsPath]
 Directory _getEngineArtifactsDirectory(String arch, BuildMode? mode) {
   assert(mode != null, 'Need to specify a build mode.');
-  return globals.cache.getArtifactDirectory('engine').childDirectory('elinux-$arch-${mode!.name}');
+  return globals.cache
+      .getArtifactDirectory('engine')
+      .childDirectory('elinux-$arch-${mode!.name}');
 }
