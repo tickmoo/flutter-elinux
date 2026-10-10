@@ -3,7 +3,7 @@
 
 [![Analysis](https://github.com/flutter-elinux/flutter-elinux/actions/workflows/analysis.yml/badge.svg)](https://github.com/flutter-elinux/flutter-elinux/actions/workflows/analysis.yml)
 
-This software is a **non-official** extension to the [Flutter SDK](https://github.com/flutter/flutter) to build and debug Flutter apps for Embedded Linux devices using [flutter-embedded-linux](https://github.com/flutter-elinux/flutter-embedded-linux), which is the flutter embedder for eLinux.
+This software is a **non-official** extension to the [Flutter SDK](https://github.com/flutter/flutter) to build aand debug Flutter apps for Embedded Linux devices using [flutter-embedded-linux](https://github.com/flutter-elinux/flutter-embedded-linux), which is the flutter embedder for eLinux.
 
 ### Repositories
 
